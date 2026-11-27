@@ -75,7 +75,14 @@ class ApiKey(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         if request.url.path == "/healthz":
             return JSONResponse({"ok": True})
-        if not secrets.compare_digest(request.headers.get("x-api-key", ""), API_KEY):
+        # Action Gateway derives the header name itself, so accept the common forms.
+        h = request.headers
+        bearer = h.get("authorization", "")
+        presented = [h.get("x-api-key", ""), h.get("api-key", ""), h.get("apikey", ""),
+                     bearer[7:] if bearer.lower().startswith("bearer ") else bearer]
+        if not any(p and secrets.compare_digest(p, API_KEY) for p in presented):
+            print("401 from", request.client.host if request.client else "?",
+                  "headers:", sorted(k for k in h.keys() if k not in ("host", "content-length")), flush=True)
             return JSONResponse({"error": "unauthorized"}, status_code=401)
         return await call_next(request)
 
