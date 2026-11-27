@@ -5,7 +5,7 @@ set -uo pipefail
 C=(--context "solutions demos")
 
 for s in $(doctl "${C[@]}" harness-runtime list --format Name --no-header | grep '^athena-'); do
-  doctl "${C[@]}" harness-runtime remove "$s" --force
+  doctl "${C[@]}" harness-runtime remove "$s"
 done
 doctl "${C[@]}" compute droplet delete pricelabs-mcp --force
 doctl "${C[@]}" databases delete "$(doctl "${C[@]}" databases list --format ID,Name --no-header | awk '$2=="pricelabs-pg"{print $1}')" --force
