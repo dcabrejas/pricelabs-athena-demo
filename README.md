@@ -3,7 +3,7 @@
 A LangChain **Deep Agents** revenue agent, deployed unchanged on **Harness
 Runtime**. It uses **Serverless Inference** (Kimi K3.1 Pro) for the model,
 **Action Gateway** for tools, and **private Postgres in NYC1** reached through
-an MCP server. One prompt, about 3 minutes.
+an MCP server. One prompt, 96–125 s in rehearsal (3 runs, same top 10 each time).
 
 > "Coastal Stays manages 2,000 listings. Review the next 30 days, find
 > underpriced listings, and push new prices for the top 10."
@@ -18,8 +18,8 @@ an MCP server. One prompt, about 3 minutes.
 | `pricing-api/`: pricing service, HTTPS | NYC1 Droplet behind Caddy, `https://pricing.134-209-209-90.sslip.io` | Their Rails app |
 | `mcp-server/`: listings-db MCP | NYC1 Droplet, **private** `10.150.0.4:8080` | Steve's "simple MCP" |
 | Postgres 17, about 800k listing-nights | NYC1 Managed DB in VPC `pricelabs-nyc1`, trusted source = Droplet only | Their Postgres |
-| Action Gateway | RIC1; reaches the MCP over the VPC peering `pricelabs-ric1 ↔ pricelabs-nyc1` | |
-| `action_code` | Action Gateway's ephemeral Python sandbox | "a sandbox that writes code" |
+| Action Gateway | Named endpoint `athena-demo` (actor `dcabrejas`, VPC `pricelabs-ric1`, RIC1); reaches the MCP over the VPC peering `pricelabs-ric1 ↔ pricelabs-nyc1` | |
+| `action_code` | Action Gateway's ephemeral Python sandbox; scores and ranks the aggregated candidates | "a sandbox that writes code" |
 
 Team: **Solutions Demos**. Secrets live in `.env.local` (gitignored). The
 GitHub repo is public: https://github.com/dcabrejas/pricelabs-athena-demo
@@ -30,7 +30,9 @@ GitHub repo is public: https://github.com/dcabrejas/pricelabs-athena-demo
 cd ~/Code/do-claude-scratchpad/pricelabs-demo
 set -a; . ./.env.local; set +a
 export FRAMEWORK_REPO_SHA=$(git rev-parse HEAD)   # push first: the session clones this commit
-doctl --context "solutions demos" harness-runtime create --spec env/athena.yaml --name athena-live
+export AG_MCP_HOST=ric1.actions.do-ai.run           # host of AG_MCP_URL, for the egress allowlist
+curl -s -X POST -H "Authorization: Bearer $PRICING_API_TOKEN" $PRICING_API_URL/audit/reset
+doctl --context "solutions demos" harness-runtime create --spec env/athena-endpoint.yaml --name athena-live
 ```
 
 The prompt for the call:
@@ -54,15 +56,21 @@ Replay the run's events: `doctl --context "solutions demos" harness-runtime logs
    works with OpenAI or Anthropic models on SI. Inference stays on DO's internal
    network.
 3. **Send the prompt.** The plan appears (`write_todos`).
-4. **Heavy data pull, done right.** The agent writes Python that runs in
-   `action_code`. That code calls the private `listings-db` tool, aggregates
-   hundreds of thousands of rows *at the source*, and returns about 20 rows.
-   This is the answer to "customers with many listings": the model never sees
+4. **Heavy data pull, done right.** The agent calls the private
+   `listings-db_run_readonly_sql` tool with GROUP BY queries, so Postgres
+   aggregates 60,000 listing-nights (from about 800k in the DB) and only about
+   55 rows come back. It then writes Python that runs in `action_code` to score
+   and rank them. Its final line reports "listing-nights analysed vs rows that
+   entered the conversation". This is the answer to "customers with many
+   listings": the model never sees
    the raw data.
 5. **Private connectivity.** Postgres is in a private NYC1 VPC, with no public
    path in (show the DB trusted sources: Droplet only). Action Gateway reaches
-   the MCP server over a NYC1↔RIC1 VPC peering. That is Steve's MCP idea,
-   working.
+   the MCP server over a NYC1↔RIC1 VPC peering. The server log shows the
+   calls arriving from `10.151.0.2`, inside the RIC1 VPC. That is Steve's MCP
+   idea, working. The MCP is plain HTTP with no auth: for private HTTP URLs the
+   gateway requires that, so the VPC, firewall, the connection's allowed
+   host:port and a read-only DB role are the boundary.
 6. **Web search through Action Gateway** confirms the market events
    (Winterfest, ski opening).
 7. **Their Rails pattern.** `get_price_recommendation` / `apply_price_change`
@@ -93,9 +101,8 @@ Replay the run's events: `doctl --context "solutions demos" harness-runtime logs
   public behind Action Gateway's 5 fixed IPs (`129.212.241.165`,
   `209.38.2.205`, `165.245.149.125`, `165.245.156.118`, `24.144.69.169`) and
   explain the private path verbally.
-- **`action_code` can't invoke the custom tool:** the agent calls
-  `run_readonly_sql` through `action_invoke` with aggregate SQL. Same "summarize
-  at the source" message.
+- **The named endpoint or its token fails:** check the token hasn't expired
+  (read + execute on action_gateway) and `AG_MCP_URL` is the endpoint's head URL.
 - **Live run misbehaves:** play the recorded run (`logs`) or the backup video.
 
 ## Gotchas found while building
@@ -110,6 +117,20 @@ Replay the run's events: `doctl --context "solutions demos" harness-runtime logs
 - Model access keys can no longer be created through the API; use the Console.
 - MCP Python SDK 2.x renamed FastMCP; the server pins `mcp==1.30.0`.
 
+## Why a named endpoint, not `tools: [do.actions]`
+
+- With `do.actions`, the per-session endpoint calls with an empty actor, so it
+  only sees providers **shared with the team**. A custom provider registered by
+  a non-owner can't be shared ("provider_not_shared"). `env/athena.yaml` is the
+  `do.actions` variant, for once a team owner shares `listings-db`.
+- Code inside `action_code` calling `invoke_digitalocean_tool('listings-db_…')`
+  hits the same error even through the named endpoint: the code sandbox calls
+  tools as the team. Direct tool calls from the agent work. Direct HTTP from
+  `action_code` into the VPC also works, but it bypasses tool policy, so the demo
+  doesn't use it.
+- Both are worth raising with the Action Gateway team. PriceLabs would hit them
+  too (see the actor-per-session question).
+
 ## Teardown
 
-`infra/teardown.sh`, then delete the Action Gateway provider and connection in the Console.
+`infra/teardown.sh`, then delete the Action Gateway endpoint `athena-demo`, provider and connection in the Console, and revoke the endpoint token.
