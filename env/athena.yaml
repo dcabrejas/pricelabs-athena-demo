@@ -1,0 +1,33 @@
+# Harness Runtime environment spec: the Deep Agent, deployed as-is.
+# Secrets come from .env.local (see README "Run it"). The repo is public, so no GITHUB_TOKEN.
+name: athena-demo
+agent: langgraph
+size: mars-2vcpu-4gb
+idle_timeout: 10m
+
+env:
+  FRAMEWORK_REPO: "https://github.com/dcabrejas/pricelabs-athena-demo.git"
+  FRAMEWORK_REPO_SHA: "${FRAMEWORK_REPO_SHA}"
+  FRAMEWORK_SUBDIR: agent
+  HARNESS_INFERENCE_MODEL: kimi-k3.1-pro          # DO Serverless Inference (open-weights)
+  PRICING_API_URL: "https://pricing.134-209-209-90.sslip.io"
+
+secrets:
+  HARNESS_INFERENCE_API_KEY: ${MODEL_ACCESS_KEY}
+  PRICING_API_TOKEN: ${PRICING_API_TOKEN}
+
+# Action Gateway: web search, the private listings-db MCP (reached over the
+# RIC1<->NYC1 VPC peering), and action_code for sandboxed Python.
+tools:
+  - do.actions
+
+# Default-deny egress, plus the "Rails" app. Inference and Action Gateway stay
+# reachable under any egress policy.
+egress:
+  - pricing.134-209-209-90.sslip.io
+  - github.com
+  - pypi.org
+  - files.pythonhosted.org
+
+permissions:
+  default: allow
