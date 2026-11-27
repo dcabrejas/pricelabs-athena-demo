@@ -1,0 +1,5 @@
+deepagents==0.7.42
+langgraph==1.2.24
+langchain-openai
+langchain-mcp-adapters==0.3.2
+httpx
