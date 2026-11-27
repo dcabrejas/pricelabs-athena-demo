@@ -26,7 +26,9 @@ Fallback: README "Fallbacks".
 - Name: `listings-db`
 - Transport: Streamable HTTP · URL: `http://10.150.0.4:8080/mcp`
 - Check **Reach this server in a VPC** → Server VPC: `pricelabs-ric1`
-- Auth: **API key** · header `X-API-Key`
+- Auth: **None**. Action Gateway only accepts a plain-HTTP private URL with
+  no authentication. The firewall (8080 open only to the two VPC ranges) and
+  the read-only DB role are the boundary. With HTTPS you could add an API key.
 
 Discovery should list both tools. If it fails, see "Troubleshooting" below.
 
@@ -34,24 +36,26 @@ Discovery should list both tools. If it fails, see "Troubleshooting" below.
 
 - Provider: `listings-db` · VPC: `pricelabs-ric1` (the same VPC as step 1)
 - Allowed destination: `10.150.0.4`, port `8080`
-- API key: paste `MCP_API_KEY` from `.env.local`
 - Actor: leave the default (your actor, `dcabrejas`). Harness Runtime
   sessions created by you use the same actor.
 
-## 3. Enable tools for the session
+## 3. Nothing to build: check the actor and the enabled tools
 
-Harness Runtime creates an Action Gateway endpoint for each session
-(`tools: [do.actions]` in `env/athena.yaml`). Make sure these tools are
-enabled in the policy it uses, set to **allow**:
+Harness Runtime creates an Action Gateway endpoint for each session by itself
+(`tools: [do.actions]` in `env/athena.yaml`), so you don't create an endpoint.
+Two things must line up:
 
-- `listings-db` → `describe_schema`, `run_readonly_sql`
-- `action_code` (Code Execution)
-- Exa → web search
+- **Tools enabled on the provider.** On the provider's *Server tools* page,
+  `describe_schema` and `run_readonly_sql` must be enabled. Disabled tools
+  still show up in search but can't be invoked.
+- **A connection for the session's actor.** Connections are per actor ID.
+  Sessions you create use your default actor: the part of your email before
+  the @ (`dcabrejas`). The connection's **Actor ID** must be exactly that,
+  with VPC `pricelabs-ric1`, destination `10.150.0.4`, port `8080`.
 
-If the Console lets you set it, also attach VPC `pricelabs-ric1` to the
-endpoint. That only matters for *direct* HTTP calls from `action_code`.
-Calls through `invoke_digitalocean_tool("...run_readonly_sql", ...)` use the
-connection's VPC from step 2.
+Verified 27 Nov: the session finds `listings-db_run_readonly_sql` and
+`listings-db_describe_schema`. Discovery traffic reaches the server from
+`10.151.0.2`, inside `pricelabs-ric1`, over the peering.
 
 ## 4. Smoke test (before Harness Runtime)
 
