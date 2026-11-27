@@ -22,7 +22,11 @@ from starlette.responses import JSONResponse
 
 ROW_CAP = 500
 DSN = os.environ["DATABASE_URL"]
-API_KEY = os.environ["MCP_API_KEY"]
+# Empty = no auth. Action Gateway only allows plain-HTTP private URLs without
+# auth ("private IP HTTP URL with a selected VPC and no authentication"); with
+# HTTPS it can send a key. Here the cloud firewall limits port 8080 to the two
+# peered VPC ranges, and the DB role is read-only.
+API_KEY = os.environ.get("MCP_API_KEY", "")
 
 # Action Gateway calls us by private IP, so the Host header is an IP, not a name.
 # DNS-rebinding protection guards browser-facing local servers; this one is
@@ -75,6 +79,8 @@ class ApiKey(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         if request.url.path == "/healthz":
             return JSONResponse({"ok": True})
+        if not API_KEY:  # private-network mode: VPC + firewall are the boundary
+            return await call_next(request)
         # Action Gateway derives the header name itself, so accept the common forms.
         h = request.headers
         bearer = h.get("authorization", "")
